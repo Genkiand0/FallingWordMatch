@@ -33,5 +33,26 @@ export const pickChar = (rng: () => number = Math.random, weights: ReadonlyMap<s
 // below 0 wins, so a kana is picked with probability weight / total. rng is a
 // parameter so a test can pass a fixed sequence
 
-export const pickPair = (rng: () => number = Math.random): [string, string] => [pickChar(rng), pickChar(rng)]
-// the two characters of one falling piece, drawn independently
+export const WORD_PART_CHANCE = 0.33 // chance that a piece is two neighbouring kana cut from a dictionary word
+
+export const pickWordPart = (rng: () => number = Math.random, entries: readonly DictEntry[] = DICTIONARY): [string, string] => {
+    const kana = Array.from(entries[Math.floor(rng() * entries.length)].kana)
+    const i = Math.floor(rng() * (kana.length - 1))
+    return [kana[i + 1], kana[i]]
+}
+// technical approach: pick a random word, then a random start i among its neighbouring pairs
+// (あまい has あま and まい). The pair is returned as [pivot, satellite] with the satellite
+// ABOVE the pivot when the piece spawns, so the piece reads あ over ま top to bottom,
+// the same direction a vertical word is read on the board
+
+export const pickPair = (rng: () => number = Math.random): [string, string] =>
+    rng() < WORD_PART_CHANCE ? pickWordPart(rng) : [pickChar(rng), pickChar(rng)]
+// the two characters of one falling piece: a part of a dictionary word WORD_PART_CHANCE of the time,
+// otherwise two independent weighted-random kana as before
+
+export const relatedWords = (chars: readonly string[], entries: readonly DictEntry[] = DICTIONARY): DictEntry[] => {
+    const hit = (e: DictEntry) => chars.filter(c => e.kana.includes(c)).length
+    return entries.filter(e => hit(e) > 0).sort((a, b) => hit(b) - hit(a) || a.kana.localeCompare(b.kana, 'ja'))
+}
+// technical approach: a word is related when it contains at least one of the falling kana; words containing
+// both come first (hit count 2), then the ones containing one, each group in Japanese order

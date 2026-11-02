@@ -1,13 +1,15 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, PointerEvent } from 'react'
 import Button from '@/components/button'
 import { BUBBLE_BG, BUBBLE_BOARDER, BUBBLE_BORDER_W, BUBBLE_SHADOW } from './theme'
 import useWordMatch from './useWordMatch'
 import type { Action, ClearedWord } from './useWordMatch'
 import { BOARD_COLS, BOARD_ROWS } from './kanaSet'
-import { pieceCells } from './logic'
+import { pieceCells, findNearWords } from './logic'
+import { DICTIONARY, DICTIONARY_LOOKUP } from './dictionary'
+import { relatedWords } from './spawn'
 
 const PAD = 12 // side padding around the whole screen content (px)
 const HUD_H = 56 // height of the score / next / back row (px)
@@ -65,10 +67,37 @@ const panelStyle: CSSProperties = {
 
 const wordLine = (w: ClearedWord) => `${w.kana} / ${w.kanji} / ${w.meaning}`
 
+const PASTELS = ['#ffc9d9', '#bfe3ff', '#c8f2c2', '#dcd0ff', '#ffd2b0'] // pink, sky, mint, lavender, peach: one per hinted word
+const GHOST_OPACITY = 0.4 // how see-through the landmark block for the missing kana is
+const HL_RED ='#d62828' // colour of the upper falling kana (the piece's satellite)
+const HL_BLUE = '#1d4ed8' // colour of the lower falling kana (the piece's pivot)
+const DICT_FONT = 'calc(12px + 4pt)' // dictionary list text: the old 12px made 4pt bigger
+const DICT_NOTE_FONT = 'calc(10px + 4pt)' // dictionary subtitle: the old 10px made 4pt bigger
+const RELATED_MAX = 8// most words listed in the book for the current falling kana
+const BOOK_BTN = 44// size of the dictionary book button (px), above the 44px minimum touch target
+const BOOK_COVER = '#c9573f' // red cover of the book icon
+const BOOK_PAGES = '#fffdf0' // page edge of the book icon
+const SORTED_DICTIONARY = [...DICTIONARY].sort((a, b) => a.kana.localeCompare(b.kana, 'ja'))
+// technical approach: sorted once when the module loads (not on every render), in Japanese order, so the book reads like a real word list
+
+function BookIcon() {
+    return (
+        <svg width={30} height={30} viewBox="0 0 30 30" shapeRendering="crispEdges" aria-hidden>
+            <rect x={5} y={3} width={21} height={25} fill={BOOK_PAGES} stroke={BUBBLE_BOARDER} strokeWidth={2} />
+            <rect x={4} y={2} width={21} height={24} fill={BOOK_COVER} stroke={BUBBLE_BOARDER} strokeWidth={2} />
+            <rect x={4} y={2} width={4} height={24} fill="#8f3a29" stroke={BUBBLE_BOARDER} strokeWidth={2} />
+            <text x={17} y={19} textAnchor="middle" fontSize={11} fill="#fffff2">あ</text>
+        </svg>
+    )
+}
+// technical approach: the book is a small inline SVG, so it needs no image file: pages behind, a red
+// cover with a darker spine, and あ on the front. crispEdges keeps the pixel-art look
+
 export default function WordMatchGame({ onLeave }: { onLeave?: () => void }) {
     const g = useWordMatch()
     const [size, setSize] = useState({ w: START_W, h: START_H })
     const [expanded, setExpanded] = useState(false)
+    const [showAllWords, setShowAllWords] = useState(false)
     const actRef = useRef(g.act)
     const delayRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const repeatRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -130,6 +159,38 @@ export default function WordMatchGame({ onLeave }: { onLeave?: () => void }) {
 
     const shown = expanded ? g.words : g.words.slice(0, WORDS_PREVIEW)
 
+    const fallingChars = g.piece ? [g.piece.b, g.piece.a] : [...g.next].reverse()
+    const related = relatedWords(fallingChars)
+    const hints = useMemo(() => {
+        const fill = new Map<string, string>()
+        const ghosts = new Map<string, { r: number, c: number, char: string, color: string }>()
+        if (g.phase === 'playing') {
+            findNearWords(g.board, DICTIONARY_LOOKUP).forEach((w, i) => {
+                const color = PASTELS[i % PASTELS.length]
+                for (const p of w.cells) if (!fill.has(`${p.r},${p.c}`)) fill.set(`${p.r},${p.c}`, color)
+                const key = `${w.missing.r},${w.missing.c}`
+                if (!ghosts.has(key)) ghosts.set(key, { r: w.missing.r, c: w.missing.c, char: w.char, color })
+            })
+        }
+        return { fill, ghosts: [...ghosts.values()] }
+    }, [g.board, g.phase])
+    // technical approach: while playing, every line that is one kana short of a word gives its tiles a pastel
+    // colour (one per word, cycling through PASTELS; a tile in several words keeps the first) and its missing
+    // cell a ghost. A cell wanted by several words gets one ghost. Recomputed only when the board or phase changes
+    const hlColor = (ch: string) => ch === fallingChars[0] ? HL_RED : ch === fallingChars[1] ? HL_BLUE : undefined
+    const hl = (text: string) => Array.from(text).map((ch, i) => {
+        const color = hlColor(ch)
+        return color ? <span key={i} style={{ color, fontWeight: 'bold' }}>{ch}</span> : ch
+    })
+    // technical approach: fallingChars is [upper, lower] = [piece.b, piece.a], and rotating swaps only their
+    // positions, not which is which, so red / blue stay with the same kana. If both kana are equal it is red.
+    // hl() paints each matching kana of a word (red upper, blue lower, others plain). Colour is used only
+    // inside the dictionary panel (subtitle and word list); the board tiles stay plain black
+    const dictRows =showAllWords || related.length === 0 ? SORTED_DICTIONARY : related.slice(0, RELATED_MAX)
+    // technical approach: the book shows only words that contain the falling kana (both-kana words first),
+    // capped at RELATED_MAX so it stays a short list. fallingChars is in top-to-bottom order; during a
+    // chain there is no piece, so it uses the next piece. "Show all words" switches to the full list
+
     return (
         <div
             data-phase={g.phase}
@@ -152,10 +213,13 @@ export default function WordMatchGame({ onLeave }: { onLeave?: () => void }) {
             <style>{`@keyframes wmBlink { 0%, 100% { background: ${FLASH_FILL} } 50% { background: #fff } }`}</style>
 
             <div style={{ width: outerW, height: HUD_H, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                <div data-testid="wm-score" style={{ fontSize: 16, whiteSpace: 'nowrap' }}>SCORE {g.score}</div>
+                <div style={{ whiteSpace: 'nowrap', lineHeight: 1.1 }}>
+                    <div style={{ fontSize: 10 }}>SCORE</div>
+                    <div data-testid="wm-score" style={{ fontSize: 16 }}>{g.score}</div>
+                </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     <span style={{ fontSize: 10 }}>NEXT</span>
-                    {g.next.map((ch, i) => (
+                    {[...g.next].reverse().map((ch, i) => (
                         <div key={i} style={{
                             width: miniSize, height: miniSize, boxSizing: 'border-box',
                             border: `${BUBBLE_BORDER_W}px solid ${BUBBLE_BOARDER}`, background: PIECE_FILL,
@@ -165,9 +229,24 @@ export default function WordMatchGame({ onLeave }: { onLeave?: () => void }) {
                         }}>{ch}</div>
                     ))}
                 </div>
-                {back}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <div
+                        data-testid="wm-btn-dict"
+                        role="button"
+                        aria-label="Open word dictionary"
+                        onClick={() => g.setPaused(true)}
+                        style={{
+                            width: BOOK_BTN, height: BOOK_BTN, boxSizing: 'border-box',
+                            border: `${BUBBLE_BORDER_W}px solid ${BUBBLE_BOARDER}`, background: BUBBLE_BG,
+                            boxShadow: `2px 2px 0 ${BUBBLE_SHADOW}`,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            cursor: 'pointer', touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent',
+                        }}
+                    ><BookIcon /></div>
+                    {back}
+                </div>
             </div>
-            {/* technical approach: HUD is one flex row as wide as the board: score left, preview middle, Back right */}
+            {/* technical approach: HUD is one flex row as wide as the board: score (label over number, so it stays narrow) left, preview middle, book button (and Back, if any) right. The book pauses the game and opens the dictionary */}
 
             <div
                 data-testid="wm-board"
@@ -188,11 +267,18 @@ export default function WordMatchGame({ onLeave }: { onLeave?: () => void }) {
                     <div
                         key={`b${r}-${c}`}
                         style={{
-                            ...tileStyle(r, c, cell, flashSet.has(`${r},${c}`) ? FLASH_FILL : BUBBLE_BG),
+                            ...tileStyle(r, c, cell, flashSet.has(`${r},${c}`) ? FLASH_FILL : hints.fill.get(`${r},${c}`) ?? BUBBLE_BG),
                             animation: flashSet.has(`${r},${c}`) ? 'wmBlink 0.2s steps(1) infinite' : undefined,
                         }}
                     >{ch}</div>
                 )))}
+                {hints.ghosts.map(gh => (
+                    <div
+                        key={`g${gh.r}-${gh.c}`}
+                        data-testid="wm-ghost"
+                        style={{ ...tileStyle(gh.r, gh.c, cell, gh.color), opacity: GHOST_OPACITY, borderStyle: 'dashed', boxShadow: 'none', pointerEvents: 'none' }}
+                    >{gh.char}</div>
+                ))}
                 {falling.map((p, i) => (
                     p.r >= 0 && <div key={`p${i}`} style={tileStyle(p.r, p.c, cell, PIECE_FILL)}>{p.ch}</div>
                 ))}
@@ -245,6 +331,46 @@ export default function WordMatchGame({ onLeave }: { onLeave?: () => void }) {
                 ))}
             </div>
             {/* technical approach: each control is a plain div reacting on pointer down (instant, no click delay); the Button inside only draws the label and ignores the pointer */}
+
+            {g.paused && g.phase !== 'over' && (
+                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 6 }}>
+                    <div
+                        data-testid="wm-dictionary"
+                        style={{
+                            ...panelStyle,
+                            pointerEvents: 'auto',
+                            boxSizing: 'border-box',
+                            width: Math.min(outerW + 24, size.w - 24),
+                            maxHeight: size.h - 48,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            padding: 12,
+                            fontSize: 14,
+                        }}
+                    >
+                        <div style={{ textAlign: 'center', fontSize: 20, lineHeight: 1.3 }}>DICTIONARY</div>
+                        <div style={{ textAlign: 'center', fontSize: DICT_NOTE_FONT, lineHeight: 1.3, marginBottom: 6 }}>
+                            {dictRows === SORTED_DICTIONARY
+                                ? `all ${SORTED_DICTIONARY.length} words`
+                                : <>words with <span style={{ color: HL_RED, fontWeight: 'bold' }}>{fallingChars[0]}</span> <span style={{ color: HL_BLUE, fontWeight: 'bold' }}>{fallingChars[1]}</span></>}
+                        </div>
+                        <div style={{ overflowY: 'auto', touchAction: 'pan-y', flex: 1, minHeight: 0, fontSize: DICT_FONT, lineHeight: 1.5, overflowWrap: 'anywhere', borderTop: `1px solid ${BUBBLE_BOARDER}`, borderBottom: `1px solid ${BUBBLE_BOARDER}`, padding: '4px 0' }}>
+                            {dictRows.map(e => <div key={e.kana}>{hl(e.kana)} / {e.kanji} / {e.meaning}</div>)}
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'center', gap: 16, marginTop: 8 }}>
+                            {related.length > 0 && (
+                                <div data-testid="wm-dict-toggle">
+                                    <Button size={12} action={() => setShowAllWords(v => !v)}>{showAllWords ? 'Related' : 'All words'}</Button>
+                                </div>
+                            )}
+                            <div data-testid="wm-dict-close">
+                                <Button size={16} action={() => { setShowAllWords(false); g.setPaused(false) }}>Close</Button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* technical approach: while paused the dictionary is an overlay above the board (zIndex 6): a title, the whole word list in a scrollable area (pan-y, so touch scrolls the list, not the page) and a Close button that resumes */}
 
             {g.phase === 'over' && (
                 <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 5 }}>

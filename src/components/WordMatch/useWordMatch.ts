@@ -9,7 +9,7 @@ import {
     type FoundWord, type Piece, type Pos,
 } from './logic'
 
-export const FALL_MS = 650 // time between automatic one-row drops
+export const FALL_MS = 1300 // time between automatic one-row drops (was 650; doubled = half the fall speed)
 export const FLASH_MS = 450 // words blink before they vanish
 export const CLEAR_MS = 350 // pause on the board with the words gone, before gravity
 export const GRAVITY_MS = 350 // pause after the blocks above have dropped, before the next scan
@@ -29,6 +29,7 @@ export type WordMatchState = {
     words: ClearedWord[] // every scored word in the order it was cleared
     popup: Popup | null // the words just cleared, shown as hiragana / kanji / meaning
     flash: Pos[] // cells about to clear (to blink)
+    paused: boolean // true while the dictionary is open: no falling, input ignored
 }
 // technical approach: one plain object holds everything the UI draws. The hook
 // keeps the same object in a ref (always the latest) and in React state (to
@@ -37,7 +38,7 @@ export type WordMatchState = {
 const toCleared = (w: FoundWord): ClearedWord => ({ kana: w.kana, kanji: w.entry.kanji, meaning: w.entry.meaning })
 
 const INITIAL: WordMatchState = {
-    board: createBoard(), piece: null, next: ['あ', 'い'], phase: 'ready', score: 0, words: [], popup: null, flash: [],
+    board: createBoard(), piece: null, next: ['あ', 'い'], phase: 'ready', score: 0, words: [], popup: null, flash: [], paused: false,
 }
 // the first render is empty and non-random; the real game starts in an effect
 // after mount, so the server HTML and the first client render match (no hydration mismatch)
@@ -104,7 +105,7 @@ export default function useWordMatch() {
 
     const act = useCallback((a: Action) => {
         const g = ref.current
-        if (g.phase !== 'playing' || !g.piece) return // chain / game over / not started: input ignored
+        if (g.phase !== 'playing' || !g.piece || g.paused) return // chain / game over / not started / dictionary open: input ignored
         if (a === 'left') commit({ piece: movePiece(g.board, g.piece, -1) })
         else if (a === 'right') commit({ piece: movePiece(g.board, g.piece, 1) })
         else if (a === 'rotate') commit({ piece: rotatePiece(g.board, g.piece) })
@@ -131,10 +132,10 @@ export default function useWordMatch() {
     // starts on mount, and stops any running chain on unmount
 
     useEffect(() => {
-        if (state.phase !== 'playing') return
+        if (state.phase !== 'playing' || state.paused) return
         const t = setInterval(() => act('soft'), FALL_MS)
         return () => clearInterval(t)
-    }, [state.phase, act])
+    }, [state.phase, state.paused, act])
     // gravity tick: while playing, the piece falls one row every FALL_MS (landing
     // when it cannot). The interval exists only in the 'playing' phase, so it is
     // gone during a chain and restarts fresh for each new piece
@@ -153,5 +154,10 @@ export default function useWordMatch() {
     }, [act])
     // PC controls: left / right arrows move, up rotates, down soft-drops, Space hard-drops
 
-    return { ...state, act, restart: start }
+    const setPaused = useCallback((paused: boolean) => commit({ paused }), [commit])
+    // technical approach: pause is one flag. The fall interval only exists while it is false
+    // (so resuming restarts a full tick) and act() returns early while it is true. A chain that is
+    // already playing back finishes behind the dictionary, then the next piece waits, frozen
+
+    return { ...state, act, restart: start, setPaused }
 }

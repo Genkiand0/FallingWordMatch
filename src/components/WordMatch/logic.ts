@@ -17,7 +17,21 @@ export const wordPoints = (length: number, step: number): number =>
 // ---------- board ----------
 
 export type Pos = { r: number, c: number }
-export type FoundWord = { kana: string, entry: DictEntry, dir: 'h' | 'v', cells: Pos[] }
+export type Direction = 'right' | 'left' | 'down' | 'up' | 'down-right' | 'down-left' | 'up-right' | 'up-left'
+export type FoundWord = { kana: string, entry: DictEntry, dir: Direction, cells: Pos[] }
+
+export const DIRECTIONS: readonly { dir: Direction, dr: number, dc: number }[] = [
+    { dir: 'right', dr: 0, dc: 1 },
+    { dir: 'down', dr: 1, dc: 0 },
+    { dir: 'left', dr: 0, dc: -1 },
+    { dir: 'up', dr: -1, dc: 0 },
+    { dir: 'down-right', dr: 1, dc: 1 },
+    { dir: 'down-left', dr: 1, dc: -1 },
+    { dir: 'up-right', dr: -1, dc: 1 },
+    { dir: 'up-left', dr: -1, dc: -1 },
+]
+// every direction a word can be read in: right and down first (the classic way), then the reverses, then
+// the four diagonals. To limit the game to fewer directions, delete entries here and nothing else changes
 
 export const createBoard = (): Board =>
     Array.from({ length: BOARD_ROWS }, () => Array<string | null>(BOARD_COLS).fill(null))
@@ -47,48 +61,115 @@ export const applyGravity = (b: Board): Board => {
 
 export const findWords = (b: Board, lookup: Lookup): FoundWord[] => {
     const found: FoundWord[] = []
-
-    // scan one line (row or column) given as a list of positions
-    const scanLine = (line: Pos[], dir: 'h' | 'v') => {
-        let i = 0
-        while (i < line.length) {
-            if (b[line[i].r][line[i].c] === null) {
-                i++
-                continue
-            }
-            let end = i // end = index after the last cell of this run
-            while (end < line.length && b[line[end].r][line[end].c] !== null) end++
-            for (let start = i; start < end; start++) {
-                const maxLen = Math.min(MAX_WORD_LENGTH, end - start)
-                for (let len = maxLen; len >= MIN_WORD_LENGTH; len--) {
-                    const cells = line.slice(start, start + len)
-                    const kana = cells.map(p => b[p.r][p.c]).join('')
-                    const entry = lookup.get(kana)
-                    if (entry) found.push({ kana, entry, dir, cells })
-                }
-            }
-            i = end
-        }
-    }
+    const seen = new Set<string>()
 
     for (let r = 0; r < BOARD_ROWS; r++) {
-        const line: Pos[] = []
-        for (let c = 0; c < BOARD_COLS; c++) line.push({ r, c })
-        scanLine(line, 'h')
-    }
-    for (let c = 0; c < BOARD_COLS; c++) {
-        const line: Pos[] = []
-        for (let r = 0; r < BOARD_ROWS; r++) line.push({ r, c })
-        scanLine(line, 'v')
+        for (let c = 0; c < BOARD_COLS; c++) {
+            if (b[r][c] === null) continue
+            for (const { dir, dr, dc } of DIRECTIONS) {
+                const cells: Pos[] = []
+                let text = ''
+                for (let k = 0; k < MAX_WORD_LENGTH; k++) {
+                    const rr = r + dr * k
+                    const cc = c + dc * k
+                    if (rr < 0 || rr >= BOARD_ROWS || cc < 0 || cc >= BOARD_COLS) break
+                    const ch = b[rr][cc]
+                    if (ch === null) break
+                    cells.push({ r: rr, c: cc })
+                    text += ch
+                }
+                for (let len = cells.length; len >= MIN_WORD_LENGTH; len--) {
+                    const kana = text.slice(0, len)
+                    const entry = lookup.get(kana)
+                    if (!entry) continue
+                    const key = kana + ':' + cells.slice(0, len).map(posKey).sort((x, y) => x - y).join(',')
+                    if (seen.has(key)) continue // a palindrome reads the same both ways: report it once
+                    seen.add(key)
+                    found.push({ kana, entry, dir, cells: cells.slice(0, len) })
+                }
+            }
+        }
     }
     return found
 }
-// technical approach: each row/column becomes a list of positions; a run of
-// non-null cells is found, then every start index and every length from the
-// longest down to MIN_WORD_LENGTH is looked up in the Map. Rows go first, then
-// columns, which gives the deterministic order. Overlaps are all reported
+// technical approach: from every filled cell, walk in each of the 8 DIRECTIONS collecting up to
+// MAX_WORD_LENGTH filled cells in a row (stopping at an edge or an empty cell), then look up every
+// prefix from the longest down to MIN_WORD_LENGTH in the Map. Reading from every cell in every
+// direction means a word is found whichever way it is written (reversed words included). Order is
+// deterministic: cells top-left to bottom-right, then DIRECTIONS order, then longest first. A palindrome
+// would be found from both of its ends with the same cells, so a kana + sorted-cells key drops the repeat.
+// Overlaps are all reported
 
 const posKey = (p: Pos): number => p.r * BOARD_COLS + p.c
+
+// ---------- near words (one kana away) ----------
+
+export type NearWord = { kana: string, entry: DictEntry, dir: Direction, cells: Pos[], missing: Pos, char: string }
+// cells = the tiles already on the board; missing = the one empty cell that would finish the word; char = the kana it needs
+
+const patternIndexes = new WeakMap<Lookup, Map<string, DictEntry[]>>()
+const patternIndex = (lookup: Lookup): Map<string, DictEntry[]> => {
+    let index = patternIndexes.get(lookup)
+    if (index) return index
+    index = new Map()
+    for (const entry of lookup.values()) {
+        const chars = Array.from(entry.kana)
+        for (let i = 0; i < chars.length; i++) {
+            const key = chars.map((ch, j) => j === i ? '*' : ch).join('')
+            const list = index.get(key)
+            if (list) list.push(entry); else index.set(key, [entry])
+        }
+    }
+    patternIndexes.set(lookup, index)
+    return index
+}
+// technical approach: every word is stored once per position with that kana replaced by '*'
+// (さかな -> *かな, さ*な, さか*). Looking up a board line with one gap, such as さ*な, is then a single Map
+// get instead of a scan of the whole dictionary. Built once per dictionary and cached in a WeakMap
+
+export const findNearWords = (b: Board, lookup: Lookup): NearWord[] => {
+    const index = patternIndex(lookup)
+    const out: NearWord[] = []
+    const seen = new Set<string>()
+    for (let r = 0; r < BOARD_ROWS; r++) {
+        for (let c = 0; c < BOARD_COLS; c++) {
+            for (const { dir, dr, dc } of DIRECTIONS) {
+                const cells: Pos[] = []
+                let pattern = ''
+                let gap = -1
+                let gaps = 0
+                for (let k = 0; k < MAX_WORD_LENGTH; k++) {
+                    const rr = r + dr * k
+                    const cc = c + dc * k
+                    if (rr < 0 || rr >= BOARD_ROWS || cc < 0 || cc >= BOARD_COLS) break
+                    const ch = b[rr][cc]
+                    if (ch === null) { gaps++; gap = k; pattern += '*' } else pattern += ch
+                    cells.push({ r: rr, c: cc })
+                    if (gaps > 1) break
+                    if (k + 1 < MIN_WORD_LENGTH || gaps !== 1) continue
+                    const hit = index.get(pattern)
+                    if (!hit) continue
+                    const m = cells[gap]
+                    if (m.r < BOARD_ROWS - 1 && b[m.r + 1][m.c] === null) continue // the gap must be playable now: on the floor or on a tile
+                    for (const entry of hit) {
+                        const filled = cells.filter((_, i) => i !== gap)
+                        const key = entry.kana + ':' + cells.map(posKey).sort((x, y) => x - y).join(',')
+                        if (seen.has(key)) continue
+                        seen.add(key)
+                        out.push({ kana: entry.kana, entry, dir, cells: filled, missing: m, char: Array.from(entry.kana)[gap] })
+                    }
+                }
+            }
+        }
+    }
+    return out
+}
+// technical approach: from every cell in each of the 8 directions, grow a line one cell at a time
+// (up to MAX_WORD_LENGTH) while counting its empty cells. A line with exactly one empty cell and at
+// least MIN_WORD_LENGTH cells is turned into a pattern like さ*な and looked up in the index. Only a gap
+// that can be filled right now (bottom row, or a tile right under it) counts, because a piece can only land
+// on a stack, never in mid air. The gap may be at either end or in the middle. Repeats (a palindrome read
+// from both ends) are dropped with a word + sorted-cells key. Not used for clearing, only for the hints
 
 export const pickScoringWords = (found: FoundWord[]): FoundWord[] => {
     const sorted = found

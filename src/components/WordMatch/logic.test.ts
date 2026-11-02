@@ -7,7 +7,10 @@ import {
     SCORE_PER_CHAR, chainMultiplier, wordPoints, createBoard, cloneBoard, applyGravity,
     findWords, pickScoringWords, resolveChain, spawnPiece, pieceCells, canPlace, movePiece,
     rotatePiece, stepDown, hardDrop, lockPiece, isSpawnBlocked, SPAWN_ROW, SPAWN_COL,
+    DIRECTIONS, findNearWords,
 } from './logic'
+import type { Direction } from './logic'
+import { pickChar, pickPair, pickWordPart, relatedWords, WORD_PART_CHANCE } from './spawn'
 
 // small fake dictionary, not the real one
 const lookup: Lookup = new Map([
@@ -16,12 +19,10 @@ const lookup: Lookup = new Map([
     ['さかなやさ', { kana: 'さかなやさ', kanji: '魚屋さ', meaning: 'fake five letter word' }],
 ])
 
-// put a string into the board starting at (r,c), going right or down
-const put = (b: Board, r: number, c: number, text: string, dir: 'h' | 'v' = 'h'): Board => {
-    Array.from(text).forEach((ch, i) => {
-        if (dir === 'h') b[r][c + i] = ch
-        else b[r + i][c] = ch
-    })
+// put a string into the board starting at (r,c), going in any direction (default right)
+const put = (b: Board, r: number, c: number, text: string, dir: Direction = 'right'): Board => {
+    const { dr, dc } = DIRECTIONS.find(d => d.dir === dir)!
+    Array.from(text).forEach((ch, i) => { b[r + dr * i][c + dc * i] = ch })
     return b
 }
 const isEmpty = (b: Board): boolean => b.every(row => row.every(cell => cell === null))
@@ -38,7 +39,7 @@ test('horizontal word is found and cleared', () => {
     const found = findWords(b, lookup)
     assert.equal(found.length, 1)
     assert.equal(found[0].kana, 'さかな')
-    assert.equal(found[0].dir, 'h')
+    assert.equal(found[0].dir, 'right')
     assert.deepEqual(found[0].cells, [{ r: 11, c: 1 }, { r: 11, c: 2 }, { r: 11, c: 3 }])
     const res = resolveChain(b, lookup)
     assert.equal(res.steps.length, 1)
@@ -47,12 +48,67 @@ test('horizontal word is found and cleared', () => {
 })
 
 test('vertical word is found', () => {
-    const b = put(createBoard(), 9, 3, 'たまご', 'v')
+    const b = put(createBoard(), 9, 3, 'たまご', 'down')
     const found = findWords(b, lookup)
     assert.equal(found.length, 1)
     assert.equal(found[0].kana, 'たまご')
-    assert.equal(found[0].dir, 'v')
+    assert.equal(found[0].dir, 'down')
     assert.deepEqual(found[0].cells, [{ r: 9, c: 3 }, { r: 10, c: 3 }, { r: 11, c: 3 }])
+})
+
+test('any direction: reversed, upward and diagonal words are found', () => {
+    const cases: [Direction, number, number][] = [
+        ['left', 11, 4], // さかな written right to left, starting at (11,4)
+        ['up', 11, 2], // bottom to top
+        ['down-right', 8, 0],
+        ['down-left', 8, 5],
+        ['up-right', 11, 0],
+        ['up-left', 11, 5],
+    ]
+    for (const [dir, r, c] of cases) {
+        const found = findWords(put(createBoard(), r, c, 'さかな', dir), lookup)
+        assert.equal(found.length, 1, dir)
+        assert.equal(found[0].kana, 'さかな', dir)
+        assert.equal(found[0].dir, dir)
+        const res = resolveChain(put(createBoard(), r, c, 'さかな', dir), lookup)
+        assert.equal(res.points, 30, dir)
+    }
+})
+
+test('any direction: a palindrome is reported once, not once per end', () => {
+    const pal: Lookup = new Map([['たけた', { kana: 'たけた', kanji: '', meaning: '' }]])
+    assert.equal(findWords(put(createBoard(), 11, 0, 'たけた'), pal).length, 1)
+})
+
+test('near words: a line one kana short is reported with its missing cell and kana', () => {
+    const near = findNearWords(put(createBoard(), 11, 0, 'さか'), lookup)
+    assert.equal(near.length, 1)
+    assert.equal(near[0].kana, 'さかな')
+    assert.deepEqual(near[0].missing, { r: 11, c: 2 })
+    assert.equal(near[0].char, 'な')
+    assert.deepEqual(near[0].cells, [{ r: 11, c: 0 }, { r: 11, c: 1 }])
+})
+
+test('near words: the gap may be in the middle, and the word may run backwards', () => {
+    const mid = createBoard()
+    mid[11][0] = 'さ'; mid[11][2] = 'な'
+    const m = findNearWords(mid, lookup)
+    assert.equal(m.length, 1)
+    assert.deepEqual([m[0].missing, m[0].char], [{ r: 11, c: 1 }, 'か'])
+    const back = findNearWords(put(createBoard(), 11, 3, 'かな', 'left'), lookup) // か col 3, な col 2
+    assert.equal(back.length, 1)
+    assert.deepEqual([back[0].dir, back[0].missing, back[0].char], ['left', { r: 11, c: 4 }, 'さ'])
+})
+
+test('near words: a gap in mid air is not a hint, a finished word is not near', () => {
+    assert.equal(findNearWords(put(createBoard(), 10, 0, 'さか'), lookup).length, 0) // nothing under (10,2)
+    assert.equal(findNearWords(put(createBoard(), 11, 0, 'さかな'), lookup).length, 0)
+})
+
+test('any direction: letters that are not in a straight line do not make a word', () => {
+    const b = put(createBoard(), 11, 0, 'さか')
+    b[10][2] = 'な' // knight-move away from か, not in line
+    assert.equal(findWords(b, lookup).length, 0)
 })
 
 test('words separated by a gap are not joined', () => {
@@ -83,11 +139,11 @@ test('overlap across directions: shared cell means only one scores', () => {
         ['さかな', { kana: 'さかな', kanji: '', meaning: '' }],
         ['たまな', { kana: 'たまな', kanji: '', meaning: '' }],
     ])
-    const b = put(put(createBoard(), 11, 0, 'さかな'), 9, 2, 'たまな', 'v')
+    const b = put(put(createBoard(), 11, 0, 'さかな'), 9, 2, 'たまな', 'down')
     const found = findWords(b, l2)
     assert.equal(found.length, 2)
     assert.equal(pickScoringWords(found).length, 1)
-    assert.equal(pickScoringWords(found)[0].kana, 'さかな') // tie on length: scan order, rows first
+    assert.equal(pickScoringWords(found)[0].kana, 'たまな') // tie on length: scan order, topmost start cell first
     assert.equal(resolveChain(b, l2).steps[0].cleared.length, 5)
 })
 
@@ -262,6 +318,31 @@ test('scoring: wordPoints and chainMultiplier', () => {
     assert.equal(wordPoints(3, 0), 30)
     assert.equal(wordPoints(3, 1), 60)
     assert.equal(wordPoints(5, 2), 150)
+})
+
+const fakeEntries = [...lookup.values()]
+const seq = (...n: number[]) => { let i = 0; return () => n[i++ % n.length] }
+
+test('spawn: a word part is two neighbouring kana, satellite (top) reads first', () => {
+    // word index 0 = さかな; start 0 -> さか, start 1 -> かな. Returned [pivot, satellite]
+    assert.deepEqual(pickWordPart(seq(0, 0), fakeEntries), ['か', 'さ'])
+    assert.deepEqual(pickWordPart(seq(0, 0.99), fakeEntries), ['な', 'か'])
+})
+
+test('spawn: pickPair uses a word part below WORD_PART_CHANCE, random kana above it', () => {
+    assert.deepEqual(pickPair(seq(0.1, 0, 0)), pickWordPart(seq(0, 0)))
+    assert.deepEqual(pickPair(seq(0.329, 0, 0)), pickWordPart(seq(0, 0)))
+    assert.deepEqual(pickPair(seq(0.331, 0, 0)), [pickChar(seq(0)), pickChar(seq(0))])
+    assert.equal(WORD_PART_CHANCE, 0.33)
+})
+// technical approach: the 33% is tested at its exact edge with a fixed random sequence. A statistical
+// count would not work: random pairs also match real word parts by chance (about half the time here)
+
+test('relatedWords: words with both kana first, then one, none unrelated', () => {
+    const r = relatedWords(['さ', 'か'], fakeEntries).map(e => e.kana)
+    assert.deepEqual(r, ['さかな', 'さかなやさ'])
+    assert.deepEqual(relatedWords(['た', 'ご'], fakeEntries).map(e => e.kana), ['たまご'])
+    assert.deepEqual(relatedWords(['ぬ', 'ね'], fakeEntries), [])
 })
 
 const main = async () => {
