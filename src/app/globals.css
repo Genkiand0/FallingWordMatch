@@ -1,0 +1,24 @@
+@font-face {
+  font-family: "EnglishPixel";
+  src: url("/fonts/EnglishPixelFont.ttf") format("truetype");
+  font-display: swap;
+  /* its capitals are taller than JapanesePF's, so scale to match mixed text */
+  size-adjust: 78.57%;
+}
+
+@font-face {
+  font-family: "JapanesePF";
+  src: url("/fonts/JapanesePF.ttf") format("truetype");
+  font-display: swap;
+  /* only downloaded once Japanese text is on the page */
+  unicode-range: U+3000-30FF, U+4E00-9FFF, U+FF00-FFEF;
+}
+
+html,
+body {
+  font-family: "EnglishPixel", "JapanesePF", sans-serif;
+  font-size: large;
+  margin: 0;
+  height: 100%;
+  background-color: #fffff2;
+}
