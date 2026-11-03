@@ -1,6 +1,6 @@
 # Falling Word Match
 
-A Puyo Puyo-style falling-block word puzzle for people learning Japanese. Pairs of hiragana tiles fall onto a 6 x 12 board. When 3 to 5 tiles in a straight line, in any of 8 directions (left or right, up or down, or diagonally, so a word also counts when written backwards), spell a word from the built-in dictionary, those tiles clear, the tiles above drop, and a new word formed by the fall is a **chain** (worth more points). Game over when the spawn spot is blocked.
+A Puyo Puyo-style falling-block word puzzle for people learning Japanese. Pairs of hiragana tiles fall onto a 7 x 12 board (set in `kanaSet.ts`). When 3 to 7 tiles in a straight line, in any of 8 directions (left or right, up or down, or diagonally, so a word also counts when written backwards), spell a word from the built-in dictionary, those tiles clear, the tiles above drop, and a new word formed by the fall is a **chain** (worth more points). Game over when the spawn spot is blocked.
 
 Standalone app (Next.js App Router, React 19, TypeScript). No login, no database, no environment variables. Extracted from the Ikko!! project.
 

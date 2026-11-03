@@ -73,7 +73,6 @@ const HL_RED ='#d62828' // colour of the upper falling kana (the piece's satelli
 const HL_BLUE = '#1d4ed8' // colour of the lower falling kana (the piece's pivot)
 const DICT_FONT = 'calc(12px + 4pt)' // dictionary list text: the old 12px made 4pt bigger
 const DICT_NOTE_FONT = 'calc(10px + 4pt)' // dictionary subtitle: the old 10px made 4pt bigger
-const RELATED_MAX = 8// most words listed in the book for the current falling kana
 const BOOK_BTN = 44// size of the dictionary book button (px), above the 44px minimum touch target
 const BOOK_COVER = '#c9573f' // red cover of the book icon
 const BOOK_PAGES = '#fffdf0' // page edge of the book icon
@@ -98,6 +97,24 @@ export default function WordMatchGame({ onLeave }: { onLeave?: () => void }) {
     const [size, setSize] = useState({ w: START_W, h: START_H })
     const [expanded, setExpanded] = useState(false)
     const [showAllWords, setShowAllWords] = useState(false)
+    const dictListRef = useRef<HTMLDivElement | null>(null)
+    const dictScrollRef = useRef(0)
+    // technical approach: the dictionary panel unmounts when closed, so the list's scrollTop is saved on
+    // close and put back by this stable callback ref when the list mounts again. Not reset between
+    // openings; the Related / All words choice is also kept so the saved position still matches the list
+    const setDictList = useCallback((el: HTMLDivElement | null) => {
+        dictListRef.current = el
+        if (el) el.scrollTop = dictScrollRef.current
+    }, [])
+    const closeDictionary = () => {
+        dictScrollRef.current = dictListRef.current?.scrollTop ?? 0
+        g.setPaused(false)
+    }
+    const toggleAllWords = () => {
+        dictScrollRef.current = 0
+        if (dictListRef.current) dictListRef.current.scrollTop = 0
+        setShowAllWords(v => !v)
+    }
     const actRef = useRef(g.act)
     const delayRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const repeatRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -186,9 +203,9 @@ export default function WordMatchGame({ onLeave }: { onLeave?: () => void }) {
     // positions, not which is which, so red / blue stay with the same kana. If both kana are equal it is red.
     // hl() paints each matching kana of a word (red upper, blue lower, others plain). Colour is used only
     // inside the dictionary panel (subtitle and word list); the board tiles stay plain black
-    const dictRows =showAllWords || related.length === 0 ? SORTED_DICTIONARY : related.slice(0, RELATED_MAX)
+    const dictRows =showAllWords || related.length === 0 ? SORTED_DICTIONARY : related
     // technical approach: the book shows only words that contain the falling kana (both-kana words first),
-    // capped at RELATED_MAX so it stays a short list. fallingChars is in top-to-bottom order; during a
+    // with no cap, so every related word is listed. fallingChars is in top-to-bottom order; during a
     // chain there is no piece, so it uses the next piece. "Show all words" switches to the full list
 
     return (
@@ -333,12 +350,17 @@ export default function WordMatchGame({ onLeave }: { onLeave?: () => void }) {
             {/* technical approach: each control is a plain div reacting on pointer down (instant, no click delay); the Button inside only draws the label and ignores the pointer */}
 
             {g.paused && g.phase !== 'over' && (
-                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 6 }}>
+                <div
+                    data-testid="wm-dict-backdrop"
+                    onClick={closeDictionary}
+                    style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 6, background: 'rgba(0,0,0,0.25)' }}
+                >
                     <div
                         data-testid="wm-dictionary"
+                        onClick={e => e.stopPropagation()}
                         style={{
                             ...panelStyle,
-                            pointerEvents: 'auto',
+                            cursor: 'default',
                             boxSizing: 'border-box',
                             width: Math.min(outerW + 24, size.w - 24),
                             maxHeight: size.h - 48,
@@ -354,23 +376,23 @@ export default function WordMatchGame({ onLeave }: { onLeave?: () => void }) {
                                 ? `all ${SORTED_DICTIONARY.length} words`
                                 : <>words with <span style={{ color: HL_RED, fontWeight: 'bold' }}>{fallingChars[0]}</span> <span style={{ color: HL_BLUE, fontWeight: 'bold' }}>{fallingChars[1]}</span></>}
                         </div>
-                        <div style={{ overflowY: 'auto', touchAction: 'pan-y', flex: 1, minHeight: 0, fontSize: DICT_FONT, lineHeight: 1.5, overflowWrap: 'anywhere', borderTop: `1px solid ${BUBBLE_BOARDER}`, borderBottom: `1px solid ${BUBBLE_BOARDER}`, padding: '4px 0' }}>
+                        <div ref={setDictList} style={{ overflowY: 'auto', touchAction: 'pan-y', flex: 1, minHeight: 0, fontSize: DICT_FONT, lineHeight: 1.5, overflowWrap: 'anywhere', borderTop: `1px solid ${BUBBLE_BOARDER}`, borderBottom: `1px solid ${BUBBLE_BOARDER}`, padding: '4px 0' }}>
                             {dictRows.map(e => <div key={e.kana}>{hl(e.kana)} / {e.kanji} / {e.meaning}</div>)}
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'center', gap: 16, marginTop: 8 }}>
                             {related.length > 0 && (
                                 <div data-testid="wm-dict-toggle">
-                                    <Button size={12} action={() => setShowAllWords(v => !v)}>{showAllWords ? 'Related' : 'All words'}</Button>
+                                    <Button size={12} action={toggleAllWords}>{showAllWords ? 'Related' : 'All words'}</Button>
                                 </div>
                             )}
                             <div data-testid="wm-dict-close">
-                                <Button size={16} action={() => { setShowAllWords(false); g.setPaused(false) }}>Close</Button>
+                                <Button size={16} action={closeDictionary}>Close</Button>
                             </div>
                         </div>
                     </div>
                 </div>
             )}
-            {/* technical approach: while paused the dictionary is an overlay above the board (zIndex 6): a title, the whole word list in a scrollable area (pan-y, so touch scrolls the list, not the page) and a Close button that resumes */}
+            {/* technical approach: while paused the dictionary is an overlay above the board (zIndex 6): a title, the whole word list in a scrollable area (pan-y, so touch scrolls the list, not the page) and a Close button that resumes. The overlay is also a full-screen dimmed backdrop: tapping it closes the dictionary (same as Close), while the panel stops the click from reaching it, so taps and scrolling inside the panel do not close it. The backdrop also catches taps meant for the controls underneath, which would be ignored while paused anyway */}
 
             {g.phase === 'over' && (
                 <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 5 }}>

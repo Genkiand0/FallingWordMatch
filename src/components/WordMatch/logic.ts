@@ -246,7 +246,7 @@ export type Piece = { a: string, b: string, r: number, c: number, rot: 0 | 1 | 2
 // rot 0 = above (r-1,c), 1 = right (r,c+1), 2 = below (r+1,c), 3 = left (r,c-1)
 
 export const SPAWN_ROW = 1
-export const SPAWN_COL = 2
+export const SPAWN_COL = Math.floor((BOARD_COLS - 1) / 2) // the middle column (3 of 0..6), follows BOARD_COLS
 
 const SAT_OFFSET: Record<0 | 1 | 2 | 3, { dr: number, dc: number }> = {
     0: { dr: -1, dc: 0 },

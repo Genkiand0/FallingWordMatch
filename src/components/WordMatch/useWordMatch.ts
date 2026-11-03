@@ -70,7 +70,7 @@ export default function useWordMatch() {
         if (isSpawnBlocked(board, piece)) { commit({ board, piece: null, phase: 'over' }); return }
         commit({ board, piece, next: pickPair(), phase: 'playing' })
     }, [commit])
-    // game over = the spawn cells (column 3, rows 1 and 2 from the top) are occupied
+    // game over = the spawn cells (the middle column, rows 1 and 2 from the top) are occupied
 
     const land = useCallback(async (p: Piece) => {
         const id = ++runId.current

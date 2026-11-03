@@ -80,6 +80,22 @@ test('any direction: a palindrome is reported once, not once per end', () => {
     assert.equal(findWords(put(createBoard(), 11, 0, 'たけた'), pal).length, 1)
 })
 
+test('long words: a 7-letter word fills the whole row, is cleared and is a hint one kana short', () => {
+    const long: Lookup = new Map([['おかえりなさい', { kana: 'おかえりなさい', kanji: 'お帰りなさい', meaning: 'welcome back' }]])
+    const b = put(createBoard(), 11, 0, 'おかえりなさい')
+    assert.equal(BOARD_COLS, 7)
+    const found = findWords(b, long)
+    assert.equal(found.length, 1)
+    assert.equal(found[0].cells.length, 7)
+    const res = resolveChain(b, long)
+    assert.equal(res.points, 70) // 7 x 10
+    assert.ok(isEmpty(res.board))
+    const short = put(createBoard(), 11, 0, 'おかえりなさ') // the last kana is missing
+    const near = findNearWords(short, long)
+    assert.equal(near.length, 1)
+    assert.deepEqual([near[0].missing, near[0].char], [{ r: 11, c: 6 }, 'い'])
+})
+
 test('near words: a line one kana short is reported with its missing cell and kana', () => {
     const near = findNearWords(put(createBoard(), 11, 0, 'さか'), lookup)
     assert.equal(near.length, 1)
@@ -212,8 +228,8 @@ test('piece: spawn position and cells', () => {
     assert.equal(p.c, SPAWN_COL)
     assert.equal(p.rot, 0)
     assert.deepEqual(pieceCells(p), [
-        { r: 1, c: 2, ch: 'あ' },
-        { r: 0, c: 2, ch: 'い' },
+        { r: 1, c: SPAWN_COL, ch: 'あ' },
+        { r: 0, c: SPAWN_COL, ch: 'い' },
     ])
     assert.ok(canPlace(createBoard(), p))
 })
@@ -227,8 +243,8 @@ test('piece: movePiece is blocked at the wall and by stacks', () => {
     for (let i = 0; i < 10; i++) p = movePiece(b, p, 1)
     assert.equal(p.c, BOARD_COLS - 1)
     const blocked = createBoard()
-    blocked[1][3] = 'う'
-    const q = spawnPiece(['あ', 'い']) // pivot (1,2)
+    blocked[1][SPAWN_COL + 1] = 'う'
+    const q = spawnPiece(['あ', 'い']) // pivot (1, SPAWN_COL)
     assert.equal(movePiece(blocked, q, 1), q)
 })
 
@@ -240,9 +256,9 @@ test('piece: rotatePiece cycles through four orientations', () => {
     const p3 = rotatePiece(b, p2)
     const p4 = rotatePiece(b, p3)
     assert.deepEqual([p1.rot, p2.rot, p3.rot, p4.rot], [1, 2, 3, 0])
-    assert.deepEqual(pieceCells(p1)[1], { r: 1, c: 3, ch: 'い' }) // right
-    assert.deepEqual(pieceCells(p2)[1], { r: 2, c: 2, ch: 'い' }) // below
-    assert.deepEqual(pieceCells(p3)[1], { r: 1, c: 1, ch: 'い' }) // left
+    assert.deepEqual(pieceCells(p1)[1], { r: 1, c: SPAWN_COL + 1, ch: 'い' }) // right
+    assert.deepEqual(pieceCells(p2)[1], { r: 2, c: SPAWN_COL, ch: 'い' }) // below
+    assert.deepEqual(pieceCells(p3)[1], { r: 1, c: SPAWN_COL - 1, ch: 'い' }) // left
     assert.deepEqual(p4, p0)
 })
 
@@ -282,21 +298,22 @@ test('piece: stepDown, hardDrop lands on the floor and on a stack', () => {
     const flat = hardDrop(b, { ...p, rot: 2 }) // satellite below pivot
     assert.equal(flat.r, BOARD_ROWS - 2)
     const stack = createBoard()
-    stack[11][2] = 'う'
-    stack[10][2] = 'え'
+    stack[11][SPAWN_COL] = 'う'
+    stack[10][SPAWN_COL] = 'え'
     assert.equal(hardDrop(stack, p).r, 9)
 })
 
 test('piece: lockPiece places both chars and each half falls on its own', () => {
     const b = createBoard()
-    b[11][3] = 'う' // stack under the satellite column only
-    const dropped = hardDrop(b, { ...spawnPiece(['あ', 'い']), rot: 1 }) // pivot col 2, satellite col 3
+    const s = SPAWN_COL + 1 // the satellite's column
+    b[11][s] = 'う' // stack under the satellite column only
+    const dropped = hardDrop(b, { ...spawnPiece(['あ', 'い']), rot: 1 }) // pivot at SPAWN_COL, satellite to its right
     assert.equal(dropped.r, 10)
     const locked = lockPiece(b, dropped)
-    assert.equal(locked[11][2], 'あ') // pivot fell to the floor
-    assert.equal(locked[10][3], 'い') // satellite rests on the stack
-    assert.equal(locked[11][3], 'う')
-    assert.equal(b[10][3], null) // input untouched
+    assert.equal(locked[11][SPAWN_COL], 'あ') // pivot fell to the floor
+    assert.equal(locked[10][s], 'い') // satellite rests on the stack
+    assert.equal(locked[11][s], 'う')
+    assert.equal(b[10][s], null) // input untouched
 })
 
 test('piece: isSpawnBlocked when a spawn cell is occupied', () => {

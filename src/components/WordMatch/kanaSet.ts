@@ -1,9 +1,9 @@
 // Shared constants and types for the Word Match mini-game.
 
-export const BOARD_COLS = 6
+export const BOARD_COLS = 7 // board width in tiles (was 6)
 export const BOARD_ROWS = 12
 export const MIN_WORD_LENGTH = 3 // the one place to change how short a word may be
-export const MAX_WORD_LENGTH = 5 // longest dictionary word (the dictionary check enforces it)
+export const MAX_WORD_LENGTH = 7 // longest dictionary word (the dictionary check enforces it); equals BOARD_COLS so a 7-letter word fits across the board
 
 const BASIC = 'あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわん' // あ to ん, no を
 const VOICED = 'がぎぐげござじずぜぞだぢづでどばびぶべぼ'
