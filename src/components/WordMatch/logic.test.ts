@@ -1,7 +1,7 @@
 // DEV
 // Plain script tests for logic.ts. Run: npx tsx src/components/WordMatch/logic.test.ts
 import assert from 'node:assert/strict'
-import { BOARD_COLS, BOARD_ROWS } from './kanaSet'
+import { ALLOWED_KANA, BOARD_COLS, BOARD_ROWS } from './kanaSet'
 import type { Board, Lookup } from './kanaSet'
 import {
     SCORE_PER_CHAR, chainMultiplier, wordPoints, createBoard, cloneBoard, applyGravity,
@@ -10,7 +10,7 @@ import {
     DIRECTIONS, findNearWords,
 } from './logic'
 import type { Direction } from './logic'
-import { pickChar, pickPair, pickWordPart, relatedWords, WORD_PART_CHANCE } from './spawn'
+import { pickChar, pickPair, pickRandomChar, pickWordPart, RANDOM_PAIR_CHANCE, relatedWords, WORD_PART_CHANCE } from './spawn'
 
 // small fake dictionary, not the real one
 const lookup: Lookup = new Map([
@@ -346,11 +346,19 @@ test('spawn: a word part is two neighbouring kana, satellite (top) reads first',
     assert.deepEqual(pickWordPart(seq(0, 0.99), fakeEntries), ['な', 'か'])
 })
 
-test('spawn: pickPair uses a word part below WORD_PART_CHANCE, random kana above it', () => {
+test('spawn: pickPair is 33% word part, 33% completely random, 34% weighted', () => {
     assert.deepEqual(pickPair(seq(0.1, 0, 0)), pickWordPart(seq(0, 0)))
     assert.deepEqual(pickPair(seq(0.329, 0, 0)), pickWordPart(seq(0, 0)))
-    assert.deepEqual(pickPair(seq(0.331, 0, 0)), [pickChar(seq(0)), pickChar(seq(0))])
+    assert.deepEqual(pickPair(seq(0.331, 0, 0.99)), [pickRandomChar(seq(0)), pickRandomChar(seq(0.99))])
+    assert.deepEqual(pickPair(seq(0.659, 0, 0)), [pickRandomChar(seq(0)), pickRandomChar(seq(0))])
+    assert.deepEqual(pickPair(seq(0.661, 0, 0)), [pickChar(seq(0)), pickChar(seq(0))])
     assert.equal(WORD_PART_CHANCE, 0.33)
+    assert.equal(RANDOM_PAIR_CHANCE, 0.33)
+})
+
+test('spawn: pickRandomChar ignores weights and reaches the first and last allowed kana', () => {
+    assert.equal(pickRandomChar(seq(0)), ALLOWED_KANA[0])
+    assert.equal(pickRandomChar(seq(0.9999)), ALLOWED_KANA[ALLOWED_KANA.length - 1])
 })
 // technical approach: the 33% is tested at its exact edge with a fixed random sequence. A statistical
 // count would not work: random pairs also match real word parts by chance (about half the time here)
